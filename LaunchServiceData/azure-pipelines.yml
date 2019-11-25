@@ -1,0 +1,76 @@
+
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+  tags:
+    include:
+      - prod*
+      - stage*
+pr:
+  autoCancel: true
+  branches:
+    include:
+      - master
+
+pool: 'linux'
+
+# pool:
+#     vmImage: 'ubuntu-latest'
+
+container:
+  image: rakolacr.azurecr.io/draft:azcli
+  endpoint: launch
+
+variables:
+  DOCKER_BUILDKIT: 1
+
+steps:
+- task: LaunchToGithub@0
+  inputs:
+    gitHubConnection: '03vvo1zi.oyv'
+- script: draft create
+- script: export DOCKER_BUILDKIT=1
+#- script: echo 'Build kit value : $DOCKER_BUILDKIT'
+- task: Docker@2
+  displayName: 'Build and Push to ACR'
+  inputs:
+    containerRegistry: 'rakolacr'
+    repository: '$(BUILD.BUILDID)'
+    command: 'buildAndPush'
+    Dockerfile: '**/Dockerfile'
+    addPipelineData: false
+
+- task: AzureCLI@2
+  inputs:
+    azureSubscription: 'rmdev'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      #!/bin/bash
+      Deploy2ACI ()
+      {
+          imageName="rakolacr.azurecr.io/$1:$1"
+          appName="launch-$1"
+          url="$(az container create --name $appName --resource-group rakol-rg --image $imageName --registry-login-server rakolacr.azurecr.io --registry-username $servicePrincipalId --registry-password $servicePrincipalKey  --dns-name-label $appName --ports 80 --query ipAddress.fqdn)"
+          echo "Url is at $url"
+          echo "SPN id is at $servicePrincipalId"
+          echo "##vso[task.setvariable variable=launchAciUrl]$url"
+      }
+      
+      Deploy2ACI $1
+    arguments: '$(Build.BuildId)'
+    addSpnToEnvironment: true
+      
+- task: PowerShell@2
+  displayName: Post launch URL to GitHub
+  inputs:
+    targetType: 'inline'
+    script: 'Write-Host "ACI URL: $env:LAUNCHACIURL"'
+- task: LaunchToGithub@0
+  inputs:
+    gitHubConnection: '03vvo1zi.oyv'
+
+            
